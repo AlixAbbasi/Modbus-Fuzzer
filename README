@@ -1,0 +1,1 @@
+It is very basic Modbus Fuzzer. It have very weak generation algorithm and technically bruteforce the protocol. 
