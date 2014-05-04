@@ -1,6 +1,6 @@
 Modbus Fuzzer V1.1 Alpha
 It is basic Modbus Fuzzer. 
-In this version for faster operation we target, diagnosis, write coil and write registers function code for faster testing.
+In this version for faster operation we target, diagnosis, write coil and write registers function code seprately as user input.
 
 It is still under development, Me and Myfriend are trying to fix the problem of Generation Algorithm. 
 
