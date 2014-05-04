@@ -1,8 +1,14 @@
-Modbus Fuzzer V1.1 Alpha
+Modbus Fuzzer v0.5 Alpha
 It is basic Modbus Fuzzer. 
 In this version for faster operation we target, diagnosis, write coil and write registers function code seprately as user input.
 
 It is still under development, Me and Myfriend are trying to fix the problem of Generation Algorithm. 
+
+
+
+Update log: v0.5: Added fuzzing feature for specific function code, Apr 30, 2014 v0.5 and logging feature
+
+Update log: v0.2 Modified and added scanning function, Dec 14, 2013 v0.2
 
 More info about it at :
 http://sigint.ir/blog/?p=14
