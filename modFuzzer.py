@@ -1,37 +1,59 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 '''
+Modbus Fuzzer - Grammar-Based Modbus Fuzzer
+
 Created on Apr 16, 2013 v0.1
 Modified and added scanning function, Dec 14, 2013 v0.2
 Added fuzzing feature for specific function code, Apr 30, 2014 v0.5
+Major rewrite with grammar-based fuzzing, Oct 2025 v1.0
 
 @author: Ali, TJ
 '''
 import socket
 import sys
-from types import *
 import struct
 import time
 import logging
+import argparse
+from datetime import datetime
+from typing import List, Optional
+
+# Import new grammar-based fuzzing components
+try:
+    from fuzzer_core import ModbusFuzzer, FuzzingStrategy
+    from config_manager import ConfigManager, setup_logging
+    from modbus_connection import ModbusConnection
+    from modbus_packet import ModbusPacket
+    from modbus_grammar import get_supported_function_codes
+except ImportError as e:
+    print(f"Error importing fuzzing modules: {e}")
+    print("Make sure all required files are present:")
+    print("- fuzzer_core.py")
+    print("- config_manager.py")
+    print("- modbus_connection.py")
+    print("- modbus_packet.py")
+    print("- modbus_grammar.py")
+    sys.exit(1)
 
 HOST = '127.0.0.1'    # The remote host
 dest_port = 502       # The same port as used by the server
-TANGO_DOWN = ''
-sock = None
-dumbflagset = 0;
+dumbflagset = 0
 logging.basicConfig(filename='./fuzzer.log', filemode='a', level=logging.DEBUG, format='[%(asctime)s][%(levelname)s] %(message)s')
 
+
 def create_connection(dest_ip, port):
+    """Create socket connection to target - used by legacy scan function"""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    except socket.error, msg:
-        sys.stderr.write("[ERROR] %s\n" % msg[1])
+    except socket.error as msg:
+        sys.stderr.write("[ERROR] %s\n" % str(msg))
         sys.exit(1)
 
     HOST = dest_ip
     try:
         sock.settimeout(0.5)
         sock.connect((HOST, dest_port))
-    except socket.error, msg:
+    except socket.error as msg:
         logging.exception("Connection Failed!")
     else:
         logging.info("Connected to Server: %s" % dest_ip)
@@ -40,404 +62,271 @@ def create_connection(dest_ip, port):
 
 
 def hexstr(s):
+    """Convert bytes to hex string representation"""
     return '-'.join('%02x' % ord(c) for c in s)
 
 
-def dumb_fuzzing(dest_ip):
-  sock = create_connection(dest_ip, dest_port)
-  unitID = 0
-  protoID = 0
-  transID = 0
-  lengthOfFunctionData = 1
-  prevField = ""
-  for functionCode in range(0,255):
-    for functionData6 in range(0, 255):
-      for functionData5 in range(0, 255):
-        for functionData4 in range(0, 255):
-          for functionData3 in range(0, 255):
-            for functionData2 in range(0, 255):
-              for functionData1 in range(0, 255):
-                functionDataField = prevField + struct.pack(">B", functionData1)
-                #print"%s" % hexstr(functionDataField)
-                length = 2 + lengthOfFunctionData
-                ModbusPacket = struct.pack(">H", transID) + \
-                     struct.pack(">H", protoID) + \
-                     struct.pack(">H", length) + \
-                     struct.pack(">B", unitID) + \
-                     struct.pack(">B", functionCode) + \
-                     functionDataField
-                logging.debug("%s" % hexstr(ModbusPacket))
-                #print"%s" % hexstr(ModbusPacket)
-                try:
-                  sock.send(ModbusPacket)
-                except socket.timeout:
-                  logging.exception("Sending Timed Out!")
-                except socket.error:
-                  logging.exception("Sending Failed!")
-                  sock.close()
-                  sock = create_connection(dest_ip, dest_port)
-                  logging.info("Try to Reconnect...")
-                else:
-                  logging.debug("Sent Packet: %s" % hexstr(ModbusPacket))
-                  print "Sent: %s" % hexstr(ModbusPacket)
-'''                      try:
-                        data = sock.recv(1024)
-                        print 'Received %s:' % repr(data)
-                      except socket.timeout:
-                        print ''
-                      except socket.error:
-                        sock.close()
-                        sock = create_connection(dest_ip, dest_port)
-
-  sock.close()
-'''
-def smart_fuzzing_with_user_input(dest_ip, msg):
-    sock = create_connection(dest_ip, dest_port)
-    strInput = msg
-    dataSend = ""
-    shortInput = ""
-    cnt = 1
-    for chInput in strInput:
-    	shortInput += chInput
-        if cnt%2 == 0:
-           intInput = int(shortInput,16)
-           dataSend += struct.pack(">B", intInput)
-           shortInput = ""
-        cnt += 1
+def grammar_based_fuzzing(dest_ip: str, strategies: List[str] = None, function_codes: List[int] = None) -> None:
+    """Grammar-based fuzzing using protocol specifications"""
+    if strategies is None:
+        strategies = ["grammar_based", "boundary_values"]
+    
+    # Convert string strategies to enum
+    strategy_enums = []
+    for strategy in strategies:
+        if strategy == "grammar_based":
+            strategy_enums.append(FuzzingStrategy.GRAMMAR_BASED)
+        elif strategy == "boundary_values":
+            strategy_enums.append(FuzzingStrategy.BOUNDARY_VALUES)
+        elif strategy == "mutation":
+            strategy_enums.append(FuzzingStrategy.MUTATION)
+        elif strategy == "stress_test":
+            strategy_enums.append(FuzzingStrategy.STRESS_TEST)
+        elif strategy == "state_based":
+            strategy_enums.append(FuzzingStrategy.STATE_BASED)
+    
+    print(f"Starting grammar-based fuzzing against {dest_ip}")
+    print(f"Strategies: {strategies}")
+    
+    # Create fuzzer instance
+    fuzzer = ModbusFuzzer(dest_ip, dest_port)
+    
     try:
-      sock.send(dataSend)
-      print 'sent: %s' % hexstr(dataSend)
-    except socket.error:
-      sock.close()
-      print 'trying to create connection again'
-      sock = create_connection(dest_ip, dest_port)
+        # Run fuzzing session
+        session = fuzzer.fuzz_all_function_codes(
+            strategies=strategy_enums, 
+            function_codes=function_codes
+        )
+        
+        # Print summary
+        summary = fuzzer.get_session_summary()
+        print("\n=== Fuzzing Session Summary ===")
+        print(f"Target: {summary['target']}")
+        print(f"Duration: {summary['duration']:.2f} seconds")
+        print(f"Total tests: {summary['total_tests']}")
+        print(f"Success rate: {summary['success_rate']:.2%}")
+        print(f"Interesting findings: {summary['interesting_findings']}")
+        print(f"Unique responses: {summary['unique_responses']}")
+        print(f"Function codes tested: {summary['function_codes_tested']}")
+        
+        # Save detailed report
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_file = f"fuzzing_session_{timestamp}.json"
+        fuzzer.save_session_report(report_file)
+        print(f"\nDetailed report saved to: {report_file}")
+        
+    except KeyboardInterrupt:
+        print("\nFuzzing interrupted by user")
+    except Exception as e:
+        logging.error(f"Fuzzing failed: {e}")
+        print(f"Error during fuzzing: {e}")
+
+
+def send_custom_packet(dest_ip: str, packet_hex: str) -> None:
+    """Send a custom hex packet to target"""
     try:
-      dataRecv = sock.recv(1024)
-      print >>sys.stderr, 'received: %s' % hexstr(dataRecv)
-    except socket.timeout:
-      print 'recv timed out!'
-    except socket.error:
-      sock.close()
-      sock = create_connection(dest_ip, dest_port)
-    sock.close()
+        # Convert hex string to bytes
+        hex_string = packet_hex.replace('-', '').replace(' ', '')
+        packet_data = bytes.fromhex(hex_string)
+        
+        # Use connection manager
+        connection = ModbusConnection(dest_ip, dest_port)
+        success, response, response_time = connection.send_and_receive(packet_data)
+        
+        if success:
+            print(f"Sent: {packet_hex}")
+            if response:
+                response_hex = '-'.join(f'{byte:02x}' for byte in response)
+                print(f"Received: {response_hex}")
+                print(f"Response time: {response_time:.3f}s")
+            else:
+                print("No response received")
+        else:
+            print("Failed to send packet")
+            
+    except Exception as e:
+        print(f"Error sending custom packet: {e}")
 
-def simulator(dest_ip):
-    value1 = 0
-    value2 = 100
-    transID = 0
-    while True:
-      strTransID = "%0.4x" % transID
-      strHex1 = "%0.4x" % value1
-      msg1 = strTransID + "0000000B01060000" + strHex1
-      smart_fuzzing_with_user_input(dest_ip, msg1)
 
-      transID += 1
-      strTransID = "%0.4x" % transID
-      strHex2 = "%0.4x" % value2
-      msg2 = strTransID + "0000000B01060001" + strHex2
-      smart_fuzzing_with_user_input(dest_ip, msg2)
+def atod(a):
+    """Convert ASCII IP to decimal"""
+    return struct.unpack("!L", socket.inet_aton(a))[0]
 
-      value1 += 1
-      value2 -= 1
-      transID += 1
-      if (value1 > 100):
-        value1 = 0
-      if (value2 < 0):
-        value2 = 100
-      time.sleep(0.3)
 
-def smart_fuzzing_for_func08h(dest_ip):
-    sock = create_connection(dest_ip, dest_port)
-    transID = 0
-    protocolID = 0
-    length = 6
-    unitID = 0
-    funcCode = 8 # Diagnostic
-    subFunction = 13 # sub function code start from 0x0000
-    dataField = 0
-
-    while True:
-      packet = struct.pack(">H", transID) + struct.pack(">H", protocolID) + struct.pack(">H", length) + \
-               struct.pack(">B", unitID) + struct.pack(">B", funcCode) + struct.pack(">H", subFunction) + \
-               struct.pack(">H", dataField)
-      try:
-        sock.send(packet)
-      except socket.error:
-        sock.close()
-        sock = create_connection(dest_ip, dest_port)
-      try:
-        dataRecv = sock.recv(1024)
-      except socket.timeout:
-        sys.stdout.write('1.time out\n')
-      except socket.error:
-        sock.close()
-        sock = create_connection(dest_ip, dest_port)
-
-      if len(dataRecv) > 0:
-         print "Sent: %s" % hexstr(packet)
-         print "Recv: %s" % hexstr(dataRecv)
-
-#      if len(dataRecv) < 1:
-#        sock.close()
-#        sock = create_connection(dest_ip, dest_port)
-#        try:
-#          sock.send(packet)
-#          print "Sent2: %s" % hexstr(packet)
-#        except socket.error:
-#          print 'FAILED TO SEND2'
-#        try:
-#          dataRecv = sock.recv(1024)
-#          print "Recv2 : %s" % hexstr(dataRecv)
-#        except socket.timeout:
-#          sys.stdout.write('2.time out\n')
-#        except socket.error:
-#          print 'FAILED TO RECV2'
-
-      transID = transID + 1
-#      subFunction = subFunction + 1
-      dataField = dataField + 1
-
-def smart_fuzzing_for_func0Fh(dest_ip):
-    sock = create_connection(dest_ip, dest_port)
-    transID = 0
-    protocolID = 0
-    length = 8
-    unitID = 0
-    funcCode = 15 # Write Multiple coils
-    startAddr = 0 # start from 0x0000
-#    startAddr = 122 # start from 0xFFFF
-    quantityOutputs = 8
-    if (quantityOutputs % 8 == 0):
-        byteCount = quantityOutputs / 8
-    else:
-        byteCount = quantityOutputs / 8 + 1
-    value = 255
-
-    loopCounter = 0
-    while True:
-      packet = struct.pack(">H", transID) + struct.pack(">H", protocolID) + struct.pack(">H", length) + \
-               struct.pack(">B", unitID) + struct.pack(">B", funcCode) + struct.pack(">H", startAddr) + \
-               struct.pack(">H", quantityOutputs) + struct.pack(">B", byteCount) + struct.pack(">B", value) + \
-               struct.pack(">B", 255)*loopCounter
-      try:
-        sock.send(packet)
-        print "Sent: %s" % hexstr(packet)
-      except socket.error:
-        sock.close()
-        sock = create_connection(dest_ip, dest_port)
-      try:
-        dataRecv = sock.recv(1024)
-        print "Recv : %s" % hexstr(dataRecv)
-      except socket.timeout:
-        sys.stdout.write('1.time out\n')
-      except socket.error:
-        sock.close()
-        sock = create_connection(dest_ip, dest_port)
-
-      if len(dataRecv) < 1:
-        sock.close()
-        sock = create_connection(dest_ip, dest_port)
-        try:
-          sock.send(packet)
-          print "Sent2: %s" % hexstr(packet)
-        except socket.error:
-          print 'FAILED TO SEND2'
-        try:
-          dataRecv = sock.recv(1024)
-          print "Recv2 : %s" % hexstr(dataRecv)
-        except socket.timeout:
-          sys.stdout.write('2.time out\n')
-        except socket.error:
-          print 'FAILED TO RECV2'
-
-      transID = transID + 1
-      loopCounter = loopCounter + 1
-
-def smart_fuzzing_for_func10h(dest_ip):
-    sock = create_connection(dest_ip, dest_port)
-    transID = 0
-    protocolID = 0
-    length = 9
-    unitID = 0
-    funcCode = 16 # Write Multiple registers
-#    startAddr = 0 # start from 0x0000
-    startAddr = 122 # start from 0xFFFF
-    quantityReg = 1
-    byteCount = 2*quantityReg
-    value = 65535
-
-    loopCounter = 0
-    while True:
-      packet = struct.pack(">H", transID) + struct.pack(">H", protocolID) + struct.pack(">H", length) + \
-               struct.pack(">B", unitID) + struct.pack(">B", funcCode) + struct.pack(">H", startAddr) + \
-               struct.pack(">H", quantityReg) + struct.pack(">B", byteCount) + struct.pack(">H", value) + \
-               struct.pack(">B", 255)*loopCounter
-      try:
-        sock.send(packet)
-        print "Sent: %s" % hexstr(packet)
-      except socket.error:
-        sock.close()
-        sock = create_connection(dest_ip, dest_port)
-      try:
-        dataRecv = sock.recv(1024)
-        print "Recv : %s" % hexstr(dataRecv)
-      except socket.timeout:
-        sys.stdout.write('1.time out\n')
-      except socket.error:
-        sock.close()
-        sock = create_connection(dest_ip, dest_port)
-
-      if len(dataRecv) < 1:
-        sock.close()
-        sock = create_connection(dest_ip, dest_port)
-        try:
-          sock.send(packet)
-          print "Sent2: %s" % hexstr(packet)
-        except socket.error:
-          print 'FAILED TO SEND2'
-        try:
-          dataRecv = sock.recv(1024)
-          print "Recv2 : %s" % hexstr(dataRecv)
-        except socket.timeout:
-          sys.stdout.write('2.time out\n')
-        except socket.error:
-          print 'FAILED TO RECV2'
-
-      transID = transID + 1
-      loopCounter = loopCounter + 1
-#    sock.close()
-
- 
-
-def atod(a): # ascii_to_decimal
-    return struct.unpack("!L",socket.inet_aton(a))[0]
-
-def dtoa(d): # decimal_to_ascii
+def dtoa(d):
+    """Convert decimal to ASCII IP"""
     return socket.inet_ntoa(struct.pack("!L", d))
 
 
 def scan_device(ip_range):
-    net,_,mask = ip_range.partition('/')
+    """Scan network range for Modbus devices"""
+    net, _, mask = ip_range.partition('/')
     mask = int(mask)
     net = atod(net)
+    
+    print(f"Scanning {ip_range} for Modbus devices...")
+    
     for dest_ip in (dtoa(net+n) for n in range(0, 1<<32-mask)):
         try:
-            sock = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-        except socket.error, msg:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        except socket.error as msg:
             sock.close()
 
         try:
             sock.settimeout(0.2)
             sock.connect((dest_ip, dest_port))
-        except socket.error, msg:
-            print "connection error at %s" % dest_ip
+        except socket.error as msg:
             continue
         except socket.timeout:
-            print 'ip %s timeout error' % dest_ip
             continue
 
         unitID = 0
-        dataRecv = '' 
-        while True:
-            dataSend =  struct.pack(">H", 0) \
-                            + struct.pack(">H", 0) \
-                            + struct.pack(">H", 6) \
-                            + struct.pack(">B", unitID) \
-                            + struct.pack(">B", 3) \
-                            + struct.pack(">H", 0) \
-                            + struct.pack(">H", 1)
+        dataRecv = b''
+        
+        # Try to identify Modbus device
+        while unitID < 10:  # Try first 10 unit IDs
+            # Read holding registers request (FC 03)
+            dataSend = struct.pack(">H", 0) + \
+                       struct.pack(">H", 0) + \
+                       struct.pack(">H", 6) + \
+                       struct.pack(">B", unitID) + \
+                       struct.pack(">B", 3) + \
+                       struct.pack(">H", 0) + \
+                       struct.pack(">H", 1)
             try:
                 sock.send(dataSend)
-                print "Sent: %s to %s" % (repr(dataSend), dest_ip)
             except socket.error:
-                print 'FAILED TO SEND'
-                #sock.close()
-                #continue
+                break
 
             try:
                 dataRecv = sock.recv(1024)
-                print "Recv : %s" % repr(dataRecv)
             except socket.timeout:
-                sys.stdout.write('.')
+                pass
 
-            if len(dataRecv) < 1:
-                sys.stdout.write('.')
-                #print "."
-                unitID += 1
-            else:
-                print '\nunit ID %d found at IP %s' % (unitID, dest_ip)
-                if dumbflagset == 1 :
-                    print 'now starting dumb fuzzing'
-                    dumb_fuzzing(dest_ip)
+            if len(dataRecv) > 0:
+                print(f"Modbus device found at {dest_ip} (Unit ID: {unitID})")
+                if dumbflagset == 1:
+                    print('Starting grammar-based fuzzing...')
+                    grammar_based_fuzzing(dest_ip)
                 break
-    sock.close()
+            else:
+                unitID += 1
+                
+        sock.close()
 
 
-# main starts here
+def create_argument_parser() -> argparse.ArgumentParser:
+    """Create command line argument parser"""
+    parser = argparse.ArgumentParser(
+        description='Modbus Fuzzer v1.0 - Grammar-Based Modbus Fuzzer',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Grammar-based fuzzing (recommended)
+  python3 modFuzzer.py --grammar 192.168.1.100
+  
+  # Test specific function codes
+  python3 modFuzzer.py --grammar 192.168.1.100 --functions 3,6,16
+  
+  # Use multiple strategies
+  python3 modFuzzer.py --grammar 192.168.1.100 --strategies grammar_based,boundary_values,mutation
+  
+  # Send custom packet
+  python3 modFuzzer.py --packet 192.168.1.100 0000000000060103000A0001
+  
+  # Scan network for devices
+  python3 modFuzzer.py --scan 192.168.1.0/24
 
-if len(sys.argv) < 3:
-    print "modbus fuzzer v0.5"
-    print ""
-    print "Usage: python modFuzzer.py [-D] [destination_IP]"
-    print "                           [-I] [destination_IP] [packet]"
-    print "                           [-S] [IP_range]"
-    print "                           [-SD] [IP_range]"
-    print "                           [-S08] [destination_IP]"
-    print "                           [-S0F] [destination_IP]"
-    print "                           [-S10] [destination_IP]"
-    print "                           [-SIM] [destination_IP]"
-    print " "
-    print "Commands:"
-    print "Either long or short options are allowed."
-    print "  --dumb    -D   Fuzzing in dumb way"
-    print "  --input   -I   Fuzzing with given modbus packet"
-    print "  --scan    -S   Scan the modbus device(s) in given IP range"
-    print "  --sc_dumb -SD  Scan the device(s) and doing dumb fuzzing"
-    print "  --f08     -F08 Fuzzing using function code 0x08"
-    print "  --f0f     -F0F Fuzzing using function code 0x0F"
-    print "  --f10     -F10 Fuzzing using function code 0x10"
-    print "  --sim     -SIM Working in simulator mode"
-#    print " "
-#    print "Option:"
-#    print "  --port    -p  Port number"
-    print " "
-    print "Example:"
-    print "python modFuzzer.py -D 192.168.0.123"
-#    print "python modFuzzer.py -D 192.168.0.123 -p 8888"
-    print "python modFuzzer.py -I 192.168.0.23 0000000000060103000A0001"
-    print "python modFuzzer.py -S 192.168.0.0/24"
-    print "python modFuzzer.py -F10 192.168.0.0"
-    print ""
-    exit(1)
+"""
+    )
+    
+    # Main commands
+    parser.add_argument('--grammar', '-g', dest='target_ip',
+                       help='Grammar-based fuzzing')
+    parser.add_argument('--packet', '-p', dest='packet_target',
+                       help='Send custom hex packet')
+    parser.add_argument('--scan', '-s', dest='scan_range',
+                       help='Scan IP range for Modbus devices')
+    parser.add_argument('--config', '-c', dest='config_file',
+                       help='Configuration file path')
+    
+    # Fuzzing options
+    parser.add_argument('--strategies', dest='strategies',
+                       help='Comma-separated fuzzing strategies: grammar_based,boundary_values,mutation,stress_test,state_based')
+    parser.add_argument('--functions', dest='function_codes',
+                       help='Comma-separated function codes to test (e.g., 3,6,16)')
+    parser.add_argument('--port', dest='port', type=int, default=502,
+                       help='Target port (default: 502)')
+    parser.add_argument('--timeout', dest='timeout', type=float, default=0.5,
+                       help='Connection timeout (default: 0.5)')
+    
+    # Additional arguments
+    parser.add_argument('packet_data', nargs='?', help='Packet data for custom packet mode')
+    
+    return parser
 
-argv1 = sys.argv[1]
-argv2 = sys.argv[2]
-argv3 = ''
-if len(sys.argv) > 3:
-    argv3 = sys.argv[3]
 
-if (argv1=='-D') or (argv1=='--dumb'):	# dumb fuzzing
-    dumb_fuzzing(argv2)
-    sys.exit(1)
+def main():
+    """Main function"""
+    parser = create_argument_parser()
+    args = parser.parse_args()
+    
+    # Load configuration
+    config_manager = ConfigManager(args.config_file)
+    config = config_manager.load_config()
+    
+    # Setup logging
+    setup_logging(config.logging)
+    logger = logging.getLogger(__name__)
+    
+    # Override config with command line arguments
+    if args.port:
+        config.target.port = args.port
+    if args.timeout:
+        config.target.timeout = args.timeout
+    
+    global dest_port
+    dest_port = config.target.port
+    
+    try:
+        # Grammar-based fuzzing
+        if args.target_ip:
+            strategies = ['grammar_based', 'boundary_values']
+            if args.strategies:
+                strategies = [s.strip() for s in args.strategies.split(',')]
+                
+            function_codes = None
+            if args.function_codes:
+                function_codes = [int(fc.strip()) for fc in args.function_codes.split(',')]
+                
+            grammar_based_fuzzing(args.target_ip, strategies, function_codes)
+            
+        # Custom packet
+        elif args.packet_target:
+            if not args.packet_data:
+                print("Error: Packet data required for custom packet mode")
+                sys.exit(1)
+            send_custom_packet(args.packet_target, args.packet_data)
+            
+        # Network scanning
+        elif args.scan_range:
+            scan_device(args.scan_range)
+            
+        else:
+            # No command specified, show help
+            parser.print_help()
+            print("\nSupported function codes:")
+            supported_codes = get_supported_function_codes()
+            for fc in supported_codes:
+                print(f"  {fc:02X} ({fc})")
+            
+    except KeyboardInterrupt:
+        print("\nOperation interrupted by user")
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+        print(f"Error: {e}")
+        sys.exit(1)
 
-elif (argv1=='-I') or (argv1=='--input'):	# smart user input
-    smart_fuzzing_with_user_input(argv2, argv3)
 
-elif (argv1=='-S') or (argv1=='--scan') or (argv1=='-SD'):       # scan device
-    if argv1 =='-SD' :
-        dumbflagset = 1 
-    scan_device(argv2)
-
-elif (argv1=='-F08') or (argv1=='--f08'): # smart fuzzing for function code 0x08
-    smart_fuzzing_for_func08h(argv2)
-
-elif (argv1=='-S0F') or (argv1=='--f0f'): # smart fuzzing for function code 0x0F
-    smart_fuzzing_for_func0Fh(argv2)
-
-elif (argv1=='-S10') or (argv1=='--f10'): # smart fuzzing for function code 0x10
-    smart_fuzzing_for_func10h(argv2)
-
-elif (argv1=='--sim') or (argv1=='--sim'):
-    simulator(argv2)
-
-sys.exit(0)
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,14 @@
+# Modbus Fuzzer Requirements
+# Python 3.7+ required
+
+# Core dependencies
+PyYAML>=6.0
+
+# Optional dependencies for enhanced functionality
+# dataclasses>=0.6  # Built-in for Python 3.7+
+# typing>=3.7.0     # Built-in for Python 3.7+
+
+# Development dependencies (optional)
+# pytest>=6.0       # For testing
+# black>=21.0       # For code formatting
+# mypy>=0.910       # For type checking

@@ -1,0 +1,66 @@
+# Modbus Fuzzer Configuration
+# YAML configuration file for flexible fuzzing parameters
+
+# Target Configuration
+target:
+  host: "127.0.0.1"
+  port: 502
+  timeout: 0.5
+  max_retries: 3
+  retry_delay: 0.1
+
+# Fuzzing Configuration
+fuzzing:
+  # Strategies to use (grammar_based, boundary_values, mutation, stress_test, state_based)
+  strategies:
+    - "grammar_based"
+    - "boundary_values"
+    - "mutation"
+  
+  # Function codes to test (empty list = all supported)
+  function_codes: []
+  
+  # Maximum tests per function code
+  max_tests_per_function: 1000
+  
+  # Delay between tests (seconds)
+  delay_between_tests: 0.01
+  
+  # Enable response analysis
+  enable_response_analysis: true
+  
+  # Enable variable data pattern testing
+  enable_variable_data_patterns: true
+
+# Logging Configuration
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  console_output: true
+  file_output: true
+  log_file: "fuzzer.log"
+  json_format: false
+
+# Output Configuration
+output:
+  save_session_report: true
+  report_file: "fuzzing_session_{timestamp}.json"
+  save_interesting_only: false
+  max_report_size_mb: 100
+
+# Advanced Configuration
+advanced:
+  # Connection pool settings
+  connection_pool:
+    max_connections: 5
+    
+  # Performance settings
+  performance:
+    parallel_connections: 1
+    batch_size: 100
+    
+  # Safety settings
+  safety:
+    max_session_duration: 3600  # seconds
+    max_total_tests: 100000
+    enable_target_health_check: true
+    health_check_interval: 300  # seconds
